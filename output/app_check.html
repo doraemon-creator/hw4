@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Campus Customs — app check</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #14213d; background: #f6f1e7; line-height: 1.5; }
+    h1 { font-family: Georgia, serif; }
+    section { background: #fff; border: 1px solid #e0d6c2; border-radius: 12px; padding: 1.25rem 1.5rem; margin: 1.5rem 0; }
+    img { max-width: 100%; max-height: 720px; border: 1px solid #ccc; border-radius: 8px; display: block; margin: 0.75rem 0; }
+    code { background: #f1ece0; padding: 0 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Campus Customs — app check</h1>
+  <p>Tested on the running site (Vite at <code>http://127.0.0.1:5173</code>, FastAPI at <code>http://127.0.0.1:8000</code>, model <code>gpt-5.6-sol</code> through Portkey).</p>
+
+  <section>
+    <h2>1. Chat checks the inventory of an item</h2>
+    <img src="app_check_images/inventory.png" alt="Chat answering price and XL stock for the Champion Reverse Weave Hoodie" />
+    <p>On the Champion Reverse Weave Hoodie page I asked “What's the price of this, and how many XL are left?” The assistant answered $68 and said XL is out of stock (0 left). Both match the database: <code>catalogue.price</code> is 68.0 and the XL row in <code>inventory</code> has quantity 0. The yellow “Looking at this item” line shows the page context reached the agent, so “this” was resolved without asking.</p>
+  </section>
+
+  <section>
+    <h2>2. Search results appear as cards after a category question</h2>
+    <img src="app_check_images/search_cards.png" alt="Eight hoodie cards in the Pulled from the shelf strip" />
+    <p>After I asked “What hoodies do you have?”, the agent called <code>search_catalogue</code> and returned eight product ids. The site rendered them as cards with image, name, and price in the “Pulled from the shelf” strip under the nav. Clicking the first card opened <code>/products/basic-hoodie-big-yale</code>, the same large-photo detail page used by the Products grid.</p>
+  </section>
+
+  <section>
+    <h2>3. Usability feature: size pills and rack filters</h2>
+    <img src="app_check_images/usability.png" alt="Products page with filters and color-coded size pills" />
+    <p>The Products page has search, sort, an “In stock only” toggle, and garment chips (Hoodies, T-shirts, Crewnecks, …). Every card shows XS–XXL pills: green means in stock, gold means only a few left, and struck-through means sold out. For example, the Baseball Left Chest Crewneck shows XS and XL crossed out. A shopper can see what is available in their size before opening the item.</p>
+  </section>
+</body>
+</html>
