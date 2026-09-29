@@ -98,8 +98,6 @@ I need to add 4 improvements to the shop: 2 on the front end and 2 on the agent/
 
 Check that all four improvements actually show up and work in the running app, not just in the code. Update usability.md so it matches exactly what's now in the app.
 
-(You can swap in other improvements if you prefer. Other options are a size selector with low-stock badges, a cart, better fuzzy product-name matching, a cheaper model for simple lookups, or a rule that the agent never recommends out-of-stock items.)
-
 ## Problem 10: Style the website
 
 **Prompt:**
@@ -119,8 +117,6 @@ Help me test the live site and document it in output/app_check.html, a page I ca
 **Follow-up:**
 
 Some images are broken or the captions are vague. Check that every image path resolves when I open the HTML file directly, and rewrite the captions so each one says specifically what the screenshot proves.
-
-Your vibe coder may not be able to take screenshots itself. If not, take them yourself while running the site, save them with the file names it gives you, and drop them into output/app_check_images/.
 
 ## Problem 12: Audit trail, safety, finish harness
 
