@@ -28,6 +28,7 @@ export default function ProductsPage() {
   const [query, setQuery] = useState("");
   const [family, setFamily] = useState("all");
   const [inStock, setInStock] = useState(false);
+  const [size, setSize] = useState("");
   const [sort, setSort] = useState("name");
 
   useEffect(() => {
@@ -40,7 +41,8 @@ export default function ProductsPage() {
     const needle = query.trim().toLowerCase();
     let rows = products.filter((product) => {
       if (family !== "all" && familyOf(product) !== family) return false;
-      if (inStock && !product.inventory.some((size) => size.in_stock)) return false;
+      if (inStock && !product.inventory.some((row) => row.in_stock)) return false;
+      if (size && !product.inventory.some((row) => row.size === size && row.in_stock)) return false;
       if (!needle) return true;
       const blob = [product.name, product.garment_type, product.description, ...(product.colors || [])]
         .join(" ")
@@ -53,7 +55,7 @@ export default function ProductsPage() {
       return a.name.localeCompare(b.name);
     });
     return rows;
-  }, [products, query, family, inStock, sort]);
+  }, [products, query, family, inStock, size, sort]);
 
   return (
     <div className="page">
@@ -79,6 +81,17 @@ export default function ProductsPage() {
             <option value="name">Name</option>
             <option value="price-asc">Price, low to high</option>
             <option value="price-desc">Price, high to low</option>
+          </select>
+        </label>
+        <label>
+          Size in stock
+          <select value={size} onChange={(event) => setSize(event.target.value)} aria-label="Filter by size in stock">
+            <option value="">Any size</option>
+            {["XS", "S", "M", "L", "XL", "XXL"].map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
           </select>
         </label>
         <label className="check">

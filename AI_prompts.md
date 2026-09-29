@@ -6,7 +6,7 @@
 
 I'm building a shop website with a chatbot for a class. Please create a file called AI_prompts.md at the root of the project. For each problem I work on, I'll add a section with the problem number and title, the prompt I typed, and a follow-up prompt if I needed one, with one sentence on what was missing after the first prompt. Set up the file with a short header and a section for Problem 1 now, and add to it as I go.
 
-**Follow-up (if needed):**
+**Follow-up:**
 
 Please add empty section templates for each problem I'll be doing so I can fill them in as I go.
 

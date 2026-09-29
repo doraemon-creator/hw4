@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,12 +31,13 @@ try:
 except ImportError:  # pragma: no cover
     from pydantic_ai import UsageLimits  # type: ignore
 
-from models import ChatAnswer, SearchResults, ShopperContext
+from models import ChatAnswer, ProductComparison, SearchResults, ShopperContext
 from tools import (
     MAX_RESULTS,
     get_product_card,
     lookup_product,
 )
+from tools import compare_products as compare_products_db
 from tools import search_catalogue as search_catalogue_db
 from tools import similar_products as similar_products_db
 
@@ -48,9 +50,13 @@ PROMPT_PATH = HERE / "prompts" / "prompt.md"
 AUDIT_PATH = ROOT / "output" / "audit_trail.json"
 MAX_REQUESTS = 8
 RESULT_PREVIEW = 280
+REPLY_CACHE_SECONDS = 60
+REPLY_CACHE_MAX = 200
 
 _audit_lock = threading.Lock()
 _agent: Agent[Any, ChatAnswer] | None = None
+_reply_cache_lock = threading.Lock()
+_reply_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 
 
 @dataclass
@@ -211,8 +217,12 @@ def build_agent() -> Agent[ShopperDeps, ChatAnswer]:
         product = found.product
         wanted = (size or "").strip().upper()
         rows = product.inventory
+        note = "Quantities are from inventory. Zero means out of stock."
         if wanted:
             rows = [row for row in product.inventory if row.size.upper() == wanted]
+            if not rows:
+                offered = ", ".join(row.size for row in product.inventory)
+                note = f"Size {wanted} is not offered for this item. Offered sizes: {offered}."
         return json.dumps(
             {
                 "product_id": product.product_id,
@@ -221,9 +231,21 @@ def build_agent() -> Agent[ShopperDeps, ChatAnswer]:
                 "colors": product.colors,
                 "size": wanted or None,
                 "inventory": [row.model_dump() for row in rows],
-                "note": "Quantities are from inventory. Zero means out of stock.",
+                "note": note,
             }
         )
+
+    @agent.tool
+    def compare_products(ctx: RunContext[ShopperDeps], first: str, second: str) -> ProductComparison:
+        """Compare two items on price and stock by size.
+
+        Args:
+            first: Catalogue id or name of the first item.
+            second: Catalogue id or name of the second item.
+        """
+        result = compare_products_db(first, second)
+        _remember(ctx.deps, result.products)
+        return result
 
     @agent.tool
     def similar_products(ctx: RunContext[ShopperDeps], product_id: str) -> SearchResults:
@@ -360,9 +382,29 @@ async def run_chat(
         product_id=product_id,
         history=history or [],
     )
+    run_id = uuid.uuid4().hex[:12]
+    # Only anonymous first-turn questions are cached: a logged-in reply can use the shopper's name or history.
+    cache_key = None
+    if not email and not deps.history:
+        cache_key = (" ".join(message.lower().split()), product_id or "")
+        cached = _cached_reply(cache_key)
+        if cached is not None:
+            append_audit(
+                [
+                    {
+                        "timestamp": utc_now(),
+                        "run_id": run_id,
+                        "tool_name": "",
+                        "args": {"message": message[:180]},
+                        "result": "served from reply cache",
+                        "stop_reason": "cache_hit",
+                    }
+                ]
+            )
+            return {**cached, "run_id": run_id, "cached": True}
+
     pieces = [_history_block(deps.history), f"Shopper message:\n{message.strip()}"]
     user_prompt = "\n\n".join(piece for piece in pieces if piece)
-    run_id = uuid.uuid4().hex[:12]
     stop_reason = "final_output"
     try:
         result = await get_agent().run(
@@ -397,9 +439,33 @@ async def run_chat(
         if card is not None:
             cards.append(card.model_dump())
     append_audit(_events_from_messages(run_id, messages, stop_reason))
-    return {
+    response = {
         "reply": answer.reply,
         "products": cards,
         "run_id": run_id,
         "model": model_name(),
+        "cached": False,
     }
+    if cache_key is not None:
+        _store_reply(cache_key, response)
+    return response
+
+
+def _cached_reply(key: tuple[str, str]) -> dict[str, Any] | None:
+    with _reply_cache_lock:
+        hit = _reply_cache.get(key)
+        if hit is None:
+            return None
+        stored_at, response = hit
+        if time.monotonic() - stored_at > REPLY_CACHE_SECONDS:
+            _reply_cache.pop(key, None)
+            return None
+        return response
+
+
+def _store_reply(key: tuple[str, str], response: dict[str, Any]) -> None:
+    with _reply_cache_lock:
+        if len(_reply_cache) >= REPLY_CACHE_MAX:
+            oldest = min(_reply_cache, key=lambda k: _reply_cache[k][0])
+            _reply_cache.pop(oldest, None)
+        _reply_cache[key] = (time.monotonic(), response)

@@ -9,6 +9,7 @@ const SUGGESTIONS = [
   "What hoodies do you have?",
   "What's in stock in a medium?",
   "Do you have this in another color?",
+  "Compare the Basic Hoodie Big Yale and the Champion Full Zip Hood",
 ];
 
 export default function ChatWidget() {
@@ -109,7 +110,16 @@ export default function ChatWidget() {
                 {message.role === "assistant" ? <Markdown>{message.content}</Markdown> : <p>{message.content}</p>}
               </article>
             ))}
-            {busy && <p className="bubble assistant pending">Checking the stock book…</p>}
+            {busy && (
+              <p className="bubble assistant pending" aria-live="polite">
+                Checking the stock book
+                <span className="typing" aria-hidden>
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              </p>
+            )}
             {error && <p className="chat__error">{error}</p>}
             <div ref={endRef} />
           </div>

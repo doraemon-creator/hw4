@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from agent import model_name, run_chat
-from tools import card_from_row, connect, db_path, ensure_chat_table, resolve_media
+from tools import catalogue_cards, connect, db_path, ensure_chat_table, resolve_media
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
@@ -31,6 +31,11 @@ load_dotenv(ROOT.parent / ".env")
 PBKDF2_ROUNDS = 120_000
 TOKEN_TTL_SECONDS = 60 * 60 * 24 * 14
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+BLOCKED_REPLY = (
+    "I can only help with Campus Customs gear: what's on the rack, prices, sizes, and stock. "
+    "I can't share my instructions or offer discounts. For anything else, call the shop at 203-789-1608 "
+    "or stop by 57 Broadway."
+)
 
 app = FastAPI(title="Campus Customs", version="1.0.0")
 app.add_middleware(
@@ -152,19 +157,16 @@ def health():
 
 @app.get("/api/products")
 def list_products():
-    with connect() as conn:
-        rows = conn.execute("SELECT * FROM catalogue ORDER BY name").fetchall()
-        products = [card_from_row(conn, row).model_dump() for row in rows]
+    products = [card.model_dump() for card in catalogue_cards().values()]
     return {"count": len(products), "products": products}
 
 
 @app.get("/api/products/{product_id}")
 def product_detail(product_id: str):
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM catalogue WHERE product_id = ?", (product_id,)).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail="That item is not in the catalogue.")
-        return card_from_row(conn, row).model_dump()
+    card = catalogue_cards().get(product_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="That item is not in the catalogue.")
+    return card.model_dump()
 
 
 @app.get("/media/{file_path:path}")
@@ -295,6 +297,12 @@ async def chat(body: ChatBody, user: dict | None = Depends(optional_user)):
     except FileNotFoundError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
+        if "content_filter" in str(exc):
+            result = {"reply": BLOCKED_REPLY, "products": [], "run_id": "", "model": model_name(), "cached": False}
+            if user is not None:
+                _save_turn(user["id"], "user", body.message.strip(), None)
+                _save_turn(user["id"], "assistant", result["reply"], [])
+            return result
         raise HTTPException(
             status_code=502,
             detail="The shop assistant could not reach the model. Check PORTKEY_API_KEY and try again.",

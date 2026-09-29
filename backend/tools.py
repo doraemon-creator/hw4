@@ -9,13 +9,19 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
+import time
 from pathlib import Path
 
-from models import ProductCard, ProductLookup, SearchResults, SizeStock
+from models import ProductCard, ProductComparison, ProductLookup, SearchResults, SizeStock
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_RESULTS = 8
 LOW_STOCK_AT = 3
+CATALOGUE_CACHE_SECONDS = 30
+
+_catalogue_lock = threading.Lock()
+_catalogue_cache: tuple[float, dict[str, ProductCard]] | None = None
 
 FAMILIES: dict[str, tuple[str, ...]] = {
     "hoodie": ("hoodie", "hooded"),
@@ -158,12 +164,35 @@ def card_from_row(conn: sqlite3.Connection, row: sqlite3.Row, matched_on: str = 
     )
 
 
+def catalogue_cards() -> dict[str, ProductCard]:
+    """Every product with its sizes, read once and reused for CATALOGUE_CACHE_SECONDS.
+
+    The app never writes catalogue or inventory, so a short cache only delays
+    stock edits made outside the app by at most that many seconds.
+    """
+    global _catalogue_cache
+    with _catalogue_lock:
+        now = time.monotonic()
+        if _catalogue_cache is not None and now - _catalogue_cache[0] < CATALOGUE_CACHE_SECONDS:
+            return _catalogue_cache[1]
+        with connect() as conn:
+            rows = conn.execute("SELECT * FROM catalogue ORDER BY name").fetchall()
+            cards = {row["product_id"]: card_from_row(conn, row) for row in rows}
+        _catalogue_cache = (now, cards)
+        return cards
+
+
+def clear_catalogue_cache() -> None:
+    global _catalogue_cache
+    with _catalogue_lock:
+        _catalogue_cache = None
+
+
 def get_product_card(product_id: str) -> ProductCard | None:
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM catalogue WHERE product_id = ?", (product_id,)).fetchone()
-        if row is None:
-            return None
-        return card_from_row(conn, row, matched_on="id")
+    card = catalogue_cards().get(product_id)
+    if card is None:
+        return None
+    return card.model_copy(update={"matched_on": "id"})
 
 
 def _tokens(query: str) -> list[str]:
@@ -207,58 +236,56 @@ def search_catalogue(query: str, limit: int = MAX_RESULTS, size: str | None = No
     family = _family_needles(tokens)
     colors = _color_needles(tokens)
     wanted_size = normalize_size(size)
-    scored: list[tuple[int, str, sqlite3.Row]] = []
+    scored: list[tuple[int, str, ProductCard]] = []
 
-    with connect() as conn:
-        rows = conn.execute("SELECT * FROM catalogue").fetchall()
-        for row in rows:
-            hay_name = row["name"].lower()
-            hay_type = row["garment_type"].lower()
-            hay_desc = row["description"].lower()
-            hay_tags = row["search_tags"].lower()
-            hay_colors = row["colors"].lower()
-            blob = " ".join((hay_name, hay_type, hay_desc, hay_tags, hay_colors))
-            if family and not any(needle in blob for needle in family):
+    for card in catalogue_cards().values():
+        hay_name = card.name.lower()
+        hay_type = card.garment_type.lower()
+        hay_desc = card.description.lower()
+        hay_tags = " ".join(card.search_tags).lower()
+        hay_colors = " ".join(card.colors).lower()
+        blob = " ".join((hay_name, hay_type, hay_desc, hay_tags, hay_colors))
+        if family and not any(needle in blob for needle in family):
+            continue
+        if colors and not any(color in hay_colors or color in hay_name or color in hay_tags for color in colors):
+            continue
+        sizes = card.inventory
+        if wanted_size is not None:
+            size_row = next((item for item in sizes if item.size.lower() == wanted_size.lower()), None)
+            if size_row is None or (in_stock_only and not size_row.in_stock):
                 continue
-            if colors and not any(color in hay_colors or color in hay_name or color in hay_tags for color in colors):
+        elif in_stock_only and not any(item.in_stock for item in sizes):
+            continue
+        score = 0
+        reasons: list[str] = []
+        if family:
+            score += 5
+            reasons.append("type")
+        if colors:
+            score += 4
+            reasons.append("color")
+        for token in tokens:
+            if token in FAMILIES or token in COLOR_WORDS or token in SIZE_WORDS:
                 continue
-            sizes = _sizes_for(conn, row["product_id"])
-            if wanted_size is not None:
-                size_row = next((item for item in sizes if item.size.lower() == wanted_size.lower()), None)
-                if size_row is None or (in_stock_only and not size_row.in_stock):
-                    continue
-            elif in_stock_only and not any(item.in_stock for item in sizes):
-                continue
-            score = 0
-            reasons: list[str] = []
-            if family:
-                score += 5
-                reasons.append("type")
-            if colors:
+            if token in hay_name:
                 score += 4
-                reasons.append("color")
-            for token in tokens:
-                if token in FAMILIES or token in COLOR_WORDS or token in SIZE_WORDS:
-                    continue
-                if token in hay_name:
-                    score += 4
-                    reasons.append(token)
-                elif token in hay_tags:
-                    score += 3
-                    reasons.append(token)
-                elif token in hay_desc or token in hay_type:
-                    score += 1
-                    reasons.append(token)
-            if not tokens:
-                score = 1
-            if score <= 0:
-                continue
-            scored.append((score, ", ".join(dict.fromkeys(reasons)), row))
+                reasons.append(token)
+            elif token in hay_tags:
+                score += 3
+                reasons.append(token)
+            elif token in hay_desc or token in hay_type:
+                score += 1
+                reasons.append(token)
+        if not tokens:
+            score = 1
+        if score <= 0:
+            continue
+        scored.append((score, ", ".join(dict.fromkeys(reasons)), card))
 
-        scored.sort(key=lambda item: (-item[0], item[2]["name"]))
-        capped = len(scored) > limit
-        chosen = scored[:limit]
-        products = [card_from_row(conn, row, matched_on=reason) for _score, reason, row in chosen]
+    scored.sort(key=lambda item: (-item[0], item[2].name))
+    capped = len(scored) > limit
+    chosen = scored[:limit]
+    products = [card.model_copy(update={"matched_on": reason}) for _score, reason, card in chosen]
 
     return SearchResults(
         query=query,
@@ -296,6 +323,38 @@ def similar_products(product_id: str, limit: int = 4) -> SearchResults:
         count=len(products),
         capped=False,
         products=products,
+    )
+
+
+def compare_products(first: str, second: str) -> ProductComparison:
+    """Price and stock for two items side by side. Each side can be an id or a name."""
+    picked: list[ProductCard] = []
+    for query in (first, second):
+        found = lookup_product(product_id=query, name_query=query)
+        if not found.found or found.product is None:
+            return ProductComparison(found=False, note=f"Nothing in the catalogue matched {query!r}.")
+        picked.append(found.product)
+    a, b = picked
+    if a.product_id == b.product_id:
+        return ProductComparison(found=False, note="Both names matched the same item.", products=[a])
+
+    cheaper = None
+    if a.price != b.price:
+        cheaper = a.product_id if a.price < b.price else b.product_id
+    more_stock = None
+    if a.total_stock != b.total_stock:
+        more_stock = a.product_id if a.total_stock > b.total_stock else b.product_id
+    in_a = {row.size for row in a.inventory if row.in_stock}
+    in_b = {row.size for row in b.inventory if row.in_stock}
+    order = [row.size for row in a.inventory]
+    return ProductComparison(
+        found=True,
+        note="Prices and quantities are from the database.",
+        products=[a, b],
+        cheaper_product_id=cheaper,
+        price_difference=round(abs(a.price - b.price), 2),
+        more_stock_product_id=more_stock,
+        sizes_in_stock_for_both=[size for size in order if size in in_a and size in in_b],
     )
 
 

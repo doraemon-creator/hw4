@@ -28,9 +28,9 @@
   </section>
 
   <section>
-    <h2>3. Usability feature: size pills and rack filters</h2>
-    <img src="app_check_images/usability.png" alt="Products page with filters and color-coded size pills" />
-    <p>The Products page has search, sort, an “In stock only” toggle, and garment chips (Hoodies, T-shirts, Crewnecks, …). Every card shows XS–XXL pills: green means in stock, gold means only a few left, and struck-through means sold out. For example, the Baseball Left Chest Crewneck shows XS and XL crossed out. A shopper can see what is available in their size before opening the item.</p>
+    <h2>3. Usability feature: search, filter, and sort on the Products page</h2>
+    <img src="app_check_images/usability.png" alt="Products page filtered to Hoodies with size M in stock, showing 21 items" />
+    <p>I picked the “Hoodies” chip and set “Size in stock” to M. The count dropped from 27 hoodies to 21, because the six hoodies whose medium has quantity 0 in the <code>inventory</code> table (such as the Crew Left Chest Hoodie and Ice Hockey Left Chest Hoodie) were hidden. A shopper sees only hoodies they can actually buy in their size, without opening each product.</p>
   </section>
 </body>
 </html>

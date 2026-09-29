@@ -57,6 +57,27 @@ class SearchResults(BaseModel):
     products: list[ProductCard]
 
 
+class ProductComparison(BaseModel):
+    """Two products side by side. Every number is copied from the database."""
+
+    found: bool
+    note: str = ""
+    products: list[ProductCard] = Field(default_factory=list)
+    cheaper_product_id: str | None = Field(
+        default=None,
+        description="Id of the lower-priced item, or None when both cost the same.",
+    )
+    price_difference: float = Field(default=0.0, description="Absolute price gap in dollars.")
+    more_stock_product_id: str | None = Field(
+        default=None,
+        description="Id of the item with more total units on hand, or None when tied.",
+    )
+    sizes_in_stock_for_both: list[str] = Field(
+        default_factory=list,
+        description="Sizes a shopper could buy in either item today.",
+    )
+
+
 class ShopperContext(BaseModel):
     """Who is chatting. Guests have no email. Never includes a password hash."""
 
